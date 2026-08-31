@@ -3,27 +3,91 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.rrobetti</groupId>
-  <artifactId>xa-fault-testkit</artifactId>
+  <artifactId>j-xa-tester</artifactId>
   <version>0.1.0-SNAPSHOT</version>
-  <name>XA Fault Testkit</name>
+  <packaging>pom</packaging>
+  <name>J XA Tester</name>
+  <description>
+    Deterministic, phase-aware XA fault-injection testkit split into focused
+    modules: core interception, JDBC and Jakarta JMS adapters, a Toxiproxy
+    controller, a JUnit 5 extension, and a timeline/probe reporting layer.
+  </description>
+
+  <modules>
+    <module>core</module>
+    <module>jdbc</module>
+    <module>jms</module>
+    <module>toxiproxy</module>
+    <module>timeline</module>
+    <module>junit5</module>
+  </modules>
+
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <junit.version>5.13.4</junit.version>
+    <h2.version>2.4.240</h2.version>
+    <jakarta.jms.version>3.1.0</jakarta.jms.version>
+    <surefire.version>3.5.4</surefire.version>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.github.rrobetti</groupId>
+        <artifactId>xa-tester-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.rrobetti</groupId>
+        <artifactId>xa-tester-timeline</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.rrobetti</groupId>
+        <artifactId>xa-tester-toxiproxy</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.h2database</groupId>
+        <artifactId>h2</artifactId>
+        <version>${h2.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>jakarta.jms</groupId>
+        <artifactId>jakarta.jms-api</artifactId>
+        <version>${jakarta.jms.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
+
   <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${surefire.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
     <plugins>
       <plugin>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.5.4</version>
       </plugin>
     </plugins>
   </build>
