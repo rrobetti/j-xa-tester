@@ -1,6 +1,6 @@
-# XA Fault Testkit
+# J XA Tester
 
-XA Fault Testkit is a Java 17 library for deterministic, phase-aware XA testing.
+J XA Tester is a Java 17 library for deterministic, phase-aware XA testing.
 Its current `0.1.0-SNAPSHOT` core decorates an existing
 `javax.transaction.xa.XAResource`, records each XA interaction, and can inject a
 synthetic `XAException` at a selected point.
