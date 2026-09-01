@@ -34,7 +34,7 @@ registration to your application.
 ```
 
 Your Spring Boot test application also needs its normal XA-capable transaction
-manager and provider dependencies, for example Narayana or another JTA
+manager and provider dependencies, for example Atomikos or another JTA
 transaction manager, an XA JDBC driver, and a Jakarta Messaging provider.
 
 ## Example application code under test
