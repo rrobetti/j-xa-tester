@@ -78,16 +78,26 @@ Two GitHub Actions workflows drive the project:
 
 One-time repository setup:
 
-1. **Environments** (Settings → Environments):
-   - `pr-approval` — add the maintainers as required reviewers so pull-request
-     builds only run after approval.
-   - `release` — add `rrobetti` as a required reviewer so no release can be
-     published without their approval.
+1. **Environments** (Settings → Environments → *New environment*). These must
+   be created by hand — GitHub auto-creates an environment on first use with
+   no protection rules, and an unprotected environment approves nothing:
+   - `pr-approval` — tick **Required reviewers** and add the maintainers, so
+     pull-request builds stay pending until one of them approves. A pending
+     build then shows a **Review deployments** button in the PR checks box.
+   - `release` — tick **Required reviewers** and add `rrobetti`, so no release
+     can be published without their approval.
 2. **Secrets** needed by the release workflow: `SONATYPE_USERNAME`,
    `SONATYPE_PASSWORD` (Sonatype Central *user token*, not account
    credentials), `GPG_PRIVATE_KEY` (ASCII-armored), `GPG_PASSPHRASE`, and
    optionally `RELEASE_TOKEN` (a PAT with `repo` scope used to push the
    release commits and tag).
+
+Note that a pull request opened by a bot or an outside collaborator is also
+subject to the repository-level gate under Settings → Actions → General →
+*Fork pull request workflows from outside collaborators*. That gate runs
+before any job exists: the run sits in the `action_required` state and is
+released by the **Approve and run workflows** button on the PR's checks (or on
+the run page under the Actions tab), not by a **Review deployments** button.
 
 ## Core: intercepting an `XAResource`
 

@@ -10,11 +10,23 @@
 #
 # PR APPROVAL GATE
 # ----------------
-# The `pr-approval` job is bound to the `pr-approval` GitHub environment.
-# Configure that environment in Settings -> Environments with rrobetti (or the
-# maintainer team) as a required reviewer: the job — and therefore the
-# `build-test` job that depends on it — then stays pending until the run is
-# approved. Pushes to the default branch skip the gate entirely.
+# On pull requests the job targets the `pr-approval` GitHub environment; on
+# pushes it targets no environment, so default-branch builds never wait.
+#
+# The environment MUST be created manually, otherwise there is no gate:
+# Settings -> Environments -> New environment -> `pr-approval`, then tick
+# "Required reviewers" and add rrobetti. GitHub silently auto-creates an
+# unprotected environment on first use, and an unprotected environment
+# approves nothing.
+#
+# Once configured, a pending pull-request build shows "Review deployments" in
+# the PR checks box (and under Actions -> the run) for the reviewer to approve.
+#
+# Note: this gate is separate from the repository-level
+# Settings -> Actions -> General -> "Fork pull request workflows from
+# outside collaborators" setting, which holds the whole run in the
+# "action_required" state behind an "Approve and run workflows" button before
+# any job — including this one — is created.
 #
 # =============================================================================
 
@@ -35,28 +47,15 @@ concurrency:
 
 jobs:
   # ===========================================================================
-  # JOB 1: Manual approval gate for pull requests
-  # ===========================================================================
-  pr-approval:
-    name: Approve PR build
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    environment: pr-approval
-    steps:
-      - name: Approved
-        run: echo "Pull request build approved by a maintainer."
-
-  # ===========================================================================
-  # JOB 2: Build and test all modules
+  # Build and test all modules
+  #
+  # Pull-request runs wait for a reviewer of the `pr-approval` environment;
+  # pushes to the default branch target no environment and start immediately.
   # ===========================================================================
   build-test:
     name: Build & Test (JDK ${{ matrix.java-version }})
-    needs: [ pr-approval ]
-    # Pushes skip the gate (pr-approval is skipped); PRs require it to succeed.
-    if: >-
-      always() &&
-      (github.event_name != 'pull_request' || needs.pr-approval.result == 'success')
     runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'pull_request' && 'pr-approval' || '' }}
 
     strategy:
       fail-fast: false
