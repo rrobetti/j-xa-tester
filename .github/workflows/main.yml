@@ -1,0 +1,86 @@
+# =============================================================================
+# Main CI Workflow — build and test every module
+# =============================================================================
+#
+# TRIGGERS
+# --------
+#   push          on the default branch (main/master): runs immediately.
+#   pull_request  targeting the default branch: runs only after a maintainer
+#                 approves the run.
+#
+# PR APPROVAL GATE
+# ----------------
+# The `pr-approval` job is bound to the `pr-approval` GitHub environment.
+# Configure that environment in Settings -> Environments with rrobetti (or the
+# maintainer team) as a required reviewer: the job — and therefore the
+# `build-test` job that depends on it — then stays pending until the run is
+# approved. Pushes to the default branch skip the gate entirely.
+#
+# =============================================================================
+
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===========================================================================
+  # JOB 1: Manual approval gate for pull requests
+  # ===========================================================================
+  pr-approval:
+    name: Approve PR build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: pr-approval
+    steps:
+      - name: Approved
+        run: echo "Pull request build approved by a maintainer."
+
+  # ===========================================================================
+  # JOB 2: Build and test all modules
+  # ===========================================================================
+  build-test:
+    name: Build & Test (JDK ${{ matrix.java-version }})
+    needs: [ pr-approval ]
+    # Pushes skip the gate (pr-approval is skipped); PRs require it to succeed.
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' || needs.pr-approval.result == 'success')
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: [ 17, 21 ]
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build and test all modules
+        run: mvn --batch-mode clean verify --no-transfer-progress
+
+      - name: Upload surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-jdk-${{ matrix.java-version }}
+          path: '**/target/surefire-reports/**'
+          if-no-files-found: ignore

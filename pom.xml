@@ -7,6 +7,7 @@
   <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
   <name>J XA Tester</name>
+  <url>https://github.com/rrobetti/j-xa-tester</url>
   <description>
     Deterministic, phase-aware XA fault-injection testkit split into focused
     modules: core interception, JDBC and Jakarta JMS adapters, a Toxiproxy
@@ -107,4 +108,110 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!--
+      Release profile: activated with -Prelease by the release workflow.
+      Enables source/javadoc JAR generation, GPG signing and publishing to
+      Sonatype Central. Required GitHub secrets: SONATYPE_USERNAME,
+      SONATYPE_PASSWORD, GPG_PRIVATE_KEY, GPG_PASSPHRASE.
+    -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <!-- Sources JAR - required by Maven Central -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <!-- Javadoc JAR - required by Maven Central -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>3.6.3</version>
+            <configuration>
+              <failOnWarnings>false</failOnWarnings>
+              <doclint>none</doclint>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <!-- GPG artifact signing - required by Maven Central -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.7</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+                <configuration>
+                  <!-- loopback mode is required for non-interactive CI environments -->
+                  <gpgArguments>
+                    <arg>--pinentry-mode</arg>
+                    <arg>loopback</arg>
+                  </gpgArguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <!-- Sonatype Central publishing -->
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.8.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <!-- Server id matching the credentials in the generated settings.xml -->
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+              <waitForPublishing>true</waitForPublishing>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
+  <!-- SCM and project metadata required by Maven Central -->
+  <scm>
+    <url>https://github.com/rrobetti/j-xa-tester</url>
+    <connection>scm:git:https://github.com/rrobetti/j-xa-tester.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/rrobetti/j-xa-tester.git</developerConnection>
+    <tag>HEAD</tag>
+  </scm>
+
+  <licenses>
+    <license>
+      <name>The Apache License, Version 2.0</name>
+      <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>rrobetti</id>
+      <name>Rogerio Robetti</name>
+    </developer>
+  </developers>
 </project>
