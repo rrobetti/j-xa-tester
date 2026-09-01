@@ -1,0 +1,85 @@
+# =============================================================================
+# Main CI Workflow — build and test every module
+# =============================================================================
+#
+# TRIGGERS
+# --------
+#   push          on the default branch (main/master): runs immediately.
+#   pull_request  targeting the default branch: runs only after a maintainer
+#                 approves the run.
+#
+# PR APPROVAL GATE
+# ----------------
+# On pull requests the job targets the `pr-approval` GitHub environment; on
+# pushes it targets no environment, so default-branch builds never wait.
+#
+# The environment MUST be created manually, otherwise there is no gate:
+# Settings -> Environments -> New environment -> `pr-approval`, then tick
+# "Required reviewers" and add rrobetti. GitHub silently auto-creates an
+# unprotected environment on first use, and an unprotected environment
+# approves nothing.
+#
+# Once configured, a pending pull-request build shows "Review deployments" in
+# the PR checks box (and under Actions -> the run) for the reviewer to approve.
+#
+# Note: this gate is separate from the repository-level
+# Settings -> Actions -> General -> "Fork pull request workflows from
+# outside collaborators" setting, which holds the whole run in the
+# "action_required" state behind an "Approve and run workflows" button before
+# any job — including this one — is created.
+#
+# =============================================================================
+
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===========================================================================
+  # Build and test all modules
+  #
+  # Pull-request runs wait for a reviewer of the `pr-approval` environment;
+  # pushes to the default branch target no environment and start immediately.
+  # ===========================================================================
+  build-test:
+    name: Build & Test (JDK ${{ matrix.java-version }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'pull_request' && 'pr-approval' || '' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: [ 17, 21 ]
+
+    steps:
+      - name: Git checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build and test all modules
+        run: mvn --batch-mode clean verify --no-transfer-progress
+
+      - name: Upload surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-jdk-${{ matrix.java-version }}
+          path: '**/target/surefire-reports/**'
+          if-no-files-found: ignore

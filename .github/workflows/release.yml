@@ -1,0 +1,335 @@
+# =============================================================================
+# Release Workflow — publish all modules to Sonatype Maven Central
+# =============================================================================
+#
+# OVERVIEW
+# --------
+#   1. Waits for manual approval (the `release` environment, reviewer rrobetti)
+#   2. Validates that the required secrets are configured
+#   3. Computes the release version and the next development version
+#   4. Bumps every pom.xml to the release version
+#   5. Builds and tests all modules
+#   6. Deploys all modules to Maven Central via Sonatype Central (-Prelease)
+#   7. Commits the release, creates the `vX.Y.Z` tag
+#   8. Bumps every pom.xml to the next development SNAPSHOT version
+#   9. Pushes commits and tag, then creates a GitHub Release
+#
+# VERSION SCHEME
+# --------------
+#   0.1.0-SNAPSHOT  ->  release 0.1.0  ->  next dev 0.1.1-SNAPSHOT
+#   X.Y.0 releases bump the minor version:  1.0.0 -> next dev 1.1.0-SNAPSHOT
+#   Supply `release_version` to override (e.g. 1.0.0, or 1.0.0-RC1 for a
+#   pre-release, which publishes without bumping the development version).
+#
+# REQUIRED GITHUB SECRETS
+# -----------------------
+#   SONATYPE_USERNAME   Sonatype Central user-token username (NOT the account name)
+#   SONATYPE_PASSWORD   Sonatype Central user-token password
+#   GPG_PRIVATE_KEY     ASCII-armored GPG private key
+#                       (gpg --armor --export-secret-keys KEY_ID)
+#   GPG_PASSPHRASE      Passphrase for the GPG key
+#   RELEASE_TOKEN       Optional PAT with `repo` scope, used to push the release
+#                       commits and tag. Falls back to GITHUB_TOKEN.
+#
+# APPROVAL
+# --------
+# The job targets the `release` environment. Create it in
+# Settings -> Environments -> release and add rrobetti as a required reviewer
+# so that no release can proceed without their explicit approval.
+#
+# HOW TO TRIGGER
+# --------------
+#   GitHub UI -> Actions -> "Release to Maven Central" -> Run workflow
+#   Tick "Dry run" to validate versions and the build without publishing.
+#
+# =============================================================================
+
+name: Release to Maven Central
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — build & version calculation only, skip publishing and push'
+        required: false
+        default: 'false'
+        type: boolean
+      release_version:
+        description: 'Optional release version override (e.g. 0.1.0, 1.0.0-RC1). Leave blank to derive from the current pom SNAPSHOT version.'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  release:
+    name: Release J XA Tester
+    runs-on: ubuntu-latest
+    # Requires manual approval before the job starts. Configure the "release"
+    # environment in Settings -> Environments with rrobetti as required reviewer.
+    environment: release
+    permissions:
+      contents: write   # push commits, create tags and GitHub releases
+    concurrency:
+      group: release
+      cancel-in-progress: false
+
+    steps:
+
+      # -----------------------------------------------------------------------
+      # 1. Validate required secrets (fast-fail before any version changes)
+      # -----------------------------------------------------------------------
+      - name: Validate required secrets
+        if: ${{ inputs.dry_run == false }}
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          missing=()
+          [[ -z "${SONATYPE_USERNAME}" ]] && missing+=("SONATYPE_USERNAME")
+          [[ -z "${SONATYPE_PASSWORD}" ]] && missing+=("SONATYPE_PASSWORD")
+          [[ -z "${GPG_PRIVATE_KEY}"   ]] && missing+=("GPG_PRIVATE_KEY")
+          [[ -z "${GPG_PASSPHRASE}"    ]] && missing+=("GPG_PASSPHRASE")
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "ERROR: The following required secrets are not configured:" >&2
+            printf '  - %s\n' "${missing[@]}" >&2
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      # -----------------------------------------------------------------------
+      # 2. Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # 3. Java + Maven settings (server credentials + GPG key import)
+      # -----------------------------------------------------------------------
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: 'temurin'
+          cache: maven
+          # The server id must match <publishingServerId>central</publishingServerId>
+          # configured for central-publishing-maven-plugin in the parent pom.
+          server-id: central
+          server-username: SONATYPE_USERNAME
+          server-password: SONATYPE_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Configure Git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # -----------------------------------------------------------------------
+      # 4. Compute release and next development versions
+      # -----------------------------------------------------------------------
+      - name: Compute versions
+        id: versions
+        env:
+          RELEASE_VERSION_INPUT: ${{ inputs.release_version }}
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          echo "Branch: ${BRANCH}"
+
+          CURRENT=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "Current version: ${CURRENT}"
+
+          IS_PRERELEASE=false
+          if [[ -n "${RELEASE_VERSION_INPUT}" ]]; then
+            RELEASE="${RELEASE_VERSION_INPUT}"
+            echo "Using provided release version: ${RELEASE}"
+
+            # Validate format: X.Y.Z or X.Y.Z-<qualifier> (qualifier starts with a letter)
+            if ! echo "${RELEASE}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z][A-Za-z0-9]*)?$'; then
+              echo "ERROR: release_version '${RELEASE}' must be X.Y.Z or X.Y.Z-<qualifier> (e.g. 1.2.0, 1.0.0-RC1)." >&2
+              exit 1
+            fi
+
+            if echo "${RELEASE}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-'; then
+              IS_PRERELEASE=true
+              echo "Pre-release detected: ${RELEASE} (no development version bump will be performed)"
+            fi
+          else
+            if [[ "${CURRENT}" != *"-SNAPSHOT" ]]; then
+              echo "ERROR: Current version '${CURRENT}' does not end in -SNAPSHOT." >&2
+              echo "Only SNAPSHOT versions can be released automatically; otherwise provide release_version." >&2
+              exit 1
+            fi
+            RELEASE="${CURRENT%-SNAPSHOT}"
+            if ! echo "${RELEASE}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "ERROR: Auto-derived release version '${RELEASE}' is not a valid semver X.Y.Z." >&2
+              exit 1
+            fi
+          fi
+
+          BASE_RELEASE="${RELEASE%%-*}"
+          REL_MAJOR=$(echo "${BASE_RELEASE}" | cut -d. -f1)
+          REL_MINOR=$(echo "${BASE_RELEASE}" | cut -d. -f2)
+          REL_PATCH=$(echo "${BASE_RELEASE}" | cut -d. -f3)
+
+          if git ls-remote --tags origin "refs/tags/v${RELEASE}" | grep -q "refs/tags/v${RELEASE}"; then
+            echo "ERROR: Tag v${RELEASE} already exists. Did you forget to bump the version?" >&2
+            exit 1
+          fi
+
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            NEXT="${CURRENT}"
+          elif [[ "${REL_PATCH}" == "0" ]]; then
+            NEXT_MINOR=$((REL_MINOR + 1))
+            NEXT="${REL_MAJOR}.${NEXT_MINOR}.0-SNAPSHOT"
+          else
+            NEXT_PATCH=$((REL_PATCH + 1))
+            NEXT="${REL_MAJOR}.${REL_MINOR}.${NEXT_PATCH}-SNAPSHOT"
+          fi
+
+          echo "Release version : ${RELEASE}"
+          echo "Next dev version: ${NEXT}"
+
+          {
+            echo "current=${CURRENT}"
+            echo "release=${RELEASE}"
+            echo "next=${NEXT}"
+            echo "branch=${BRANCH}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+          } >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # 5. Set the release version in every pom.xml
+      # -----------------------------------------------------------------------
+      - name: Set release version (${{ steps.versions.outputs.release }})
+        run: |
+          mvn --batch-mode versions:set \
+              -DnewVersion=${{ steps.versions.outputs.release }} \
+              -DprocessAllModules=true \
+              -DgenerateBackupPoms=false \
+              --no-transfer-progress
+
+      # -----------------------------------------------------------------------
+      # 6. Build and test all modules before publishing anything
+      # -----------------------------------------------------------------------
+      - name: Build and test all modules
+        run: mvn --batch-mode clean verify -Dgpg.skip=true --no-transfer-progress
+
+      # -----------------------------------------------------------------------
+      # 7. Deploy all modules to Maven Central
+      # -----------------------------------------------------------------------
+      - name: Deploy to Maven Central
+        if: ${{ inputs.dry_run == false }}
+        env:
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          mvn --batch-mode deploy \
+              -DskipTests \
+              -Prelease \
+              --no-transfer-progress
+
+      # -----------------------------------------------------------------------
+      # 8. Commit the release and create the tag
+      # -----------------------------------------------------------------------
+      - name: Commit release pom changes and create tag
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          git add -A -- ':!**/target/**'
+          git commit -m "chore(release): prepare release ${{ steps.versions.outputs.release }}"
+          git tag -a "v${{ steps.versions.outputs.release }}" \
+              -m "Release ${{ steps.versions.outputs.release }}"
+
+      # -----------------------------------------------------------------------
+      # 9. Set the next development version
+      # -----------------------------------------------------------------------
+      - name: Set next development version (${{ steps.versions.outputs.next }})
+        if: ${{ steps.versions.outputs.is_prerelease == 'false' }}
+        run: |
+          mvn --batch-mode versions:set \
+              -DnewVersion=${{ steps.versions.outputs.next }} \
+              -DprocessAllModules=true \
+              -DgenerateBackupPoms=false \
+              --no-transfer-progress
+
+      - name: Commit next development version
+        if: ${{ inputs.dry_run == false && steps.versions.outputs.is_prerelease == 'false' }}
+        run: |
+          git add -A -- ':!**/target/**'
+          git commit -m "chore(release): prepare next development iteration ${{ steps.versions.outputs.next }}"
+
+      # -----------------------------------------------------------------------
+      # 10. Push commits and the release tag
+      # -----------------------------------------------------------------------
+      - name: Push commits and tag
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          git push origin HEAD:${{ steps.versions.outputs.branch }}
+          git push origin "v${{ steps.versions.outputs.release }}"
+
+      # -----------------------------------------------------------------------
+      # 11. Create the GitHub Release from the new tag
+      # -----------------------------------------------------------------------
+      - name: Create GitHub Release
+        if: ${{ inputs.dry_run == false }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag   = 'v${{ steps.versions.outputs.release }}';
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const isPrerelease = '${{ steps.versions.outputs.is_prerelease }}' === 'true';
+
+            const { data: generated } = await github.rest.repos.generateReleaseNotes({
+              owner,
+              repo,
+              tag_name:         tag,
+              target_commitish: '${{ steps.versions.outputs.branch }}',
+            });
+
+            const artifactsFooter = [
+              '',
+              '---',
+              '',
+              '### Artifacts',
+              '- **Maven Central:** https://central.sonatype.com/search?q=io.github.rrobetti',
+            ].join('\n');
+
+            await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name:    tag,
+              name:        generated.name,
+              body:        generated.body + artifactsFooter,
+              draft:       false,
+              prerelease:  isPrerelease,
+              make_latest: isPrerelease ? 'false' : 'true',
+            });
+
+      # -----------------------------------------------------------------------
+      # Summary
+      # -----------------------------------------------------------------------
+      - name: Release summary
+        run: |
+          {
+            echo "### Release Summary"
+            echo ""
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "**Mode:** Dry run (nothing was published)"
+            else
+              echo "**Mode:** Full release"
+            fi
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Previous version | \`${{ steps.versions.outputs.current }}\` |"
+            echo "| Released version | \`${{ steps.versions.outputs.release }}\` |"
+            echo "| Next dev version | \`${{ steps.versions.outputs.next }}\` |"
+            echo ""
+            echo "**Maven Central:** https://central.sonatype.com/search?q=io.github.rrobetti"
+          } >> "$GITHUB_STEP_SUMMARY"
