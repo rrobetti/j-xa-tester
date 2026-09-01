@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.rrobetti</groupId>
   <artifactId>j-xa-tester</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0-alpha</version>
   <packaging>pom</packaging>
   <name>J XA Tester</name>
   <url>https://github.com/rrobetti/j-xa-tester</url>
