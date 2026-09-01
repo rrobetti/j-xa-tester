@@ -8,6 +8,34 @@ That gap matters because XA semantics are about sequence as well as failure. Cod
 
 The testkit sits between an application and an existing XA resource. It watches calls such as `start`, `prepare`, `commit`, and recovery operations without needing to know the database query or message body. A test gives the resource a safe, meaningful name, then asks J XA Tester to react when a chosen operation reaches a chosen phase. The reaction can be a synthetic XA exception, a pause, a callback, or a network fault through Toxiproxy. That means a test can reliably say, “make the order database fail just before commit,” instead of hoping a temporary outage arrives at the right millisecond.
 
+For example, this test wraps the XA resource supplied by an order database and makes its first matching `commit` report that the resource manager failed. The application can then be exercised normally, with its transaction manager receiving the same failure it would receive from an XA participant. The `rule.fired()` check confirms that the scenario reached the intended boundary.
+
+```java
+import static javax.transaction.xa.XAException.XAER_RMFAIL;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import io.github.rrobetti.xafault.FaultInjectingXAResource;
+import io.github.rrobetti.xafault.ResourceKind;
+import io.github.rrobetti.xafault.XaAction;
+import io.github.rrobetti.xafault.XaRule;
+import io.github.rrobetti.xafault.XaRules;
+import io.github.rrobetti.xafault.XaOperation;
+import io.github.rrobetti.xafault.XaScenarioEngine;
+import javax.transaction.xa.XAResource;
+
+XaScenarioEngine engine = new XaScenarioEngine();
+XaRule rule = new XaRule(
+    XaRules.before("orders-db", XaOperation.COMMIT),
+    XaAction.throwException(XAER_RMFAIL));
+engine.addRule(rule);
+
+XAResource instrumented = new FaultInjectingXAResource(
+    providerXaResource, engine, "orders-db", ResourceKind.JDBC);
+transactionManager.enlistResource(instrumented);
+
+assertTrue(rule.fired());
+```
+
 ```mermaid
 flowchart LR
     App[Application test] --> TM[Transaction manager]
