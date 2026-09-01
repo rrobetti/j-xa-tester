@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Objects;
+import javax.sql.XAConnection;
 import javax.transaction.xa.XAResource;
 
 /** Applies XA fault injection to XA resources encountered by a J API Proxy adapter. */
@@ -27,17 +28,24 @@ public final class XaFaultInvocationFilter implements InvocationFilter {
 
     @Override
     public Object intercept(InvocationContext invocation, InvocationChain chain) throws Throwable {
+        if (invocation.interfaceType() == XAConnection.class
+                && "getXAResource".equals(invocation.method().getName())) {
+            return resourceFor(((XAConnection) invocation.delegate()).getXAResource());
+        }
         if (invocation.interfaceType() != XAResource.class) {
             return chain.proceed(invocation);
         }
-        XAResource delegate = (XAResource) invocation.delegate();
-        FaultInjectingXAResource resource = resources.computeIfAbsent(delegate,
-                key -> new FaultInjectingXAResource(key, engine, resourceId, resourceKind));
+        FaultInjectingXAResource resource = resourceFor((XAResource) invocation.delegate());
         try {
             return invocation.method().invoke(resource, adaptArguments(invocation));
         } catch (InvocationTargetException exception) {
             throw exception.getCause();
         }
+    }
+
+    private FaultInjectingXAResource resourceFor(XAResource delegate) {
+        return resources.computeIfAbsent(delegate,
+                key -> new FaultInjectingXAResource(key, engine, resourceId, resourceKind));
     }
 
     private static Object[] adaptArguments(InvocationContext invocation) {

@@ -114,16 +114,15 @@ and `.compose(...)` to chain several actions.
 
 ## JDBC adapter
 
-`FaultInjectingXADataSource` wraps a provider `XADataSource` so every
-connection it produces — normal or recovery — shares one engine and
-`resourceId` automatically:
+`FaultInjectingJdbc.wrap` uses [J API Proxy](https://github.com/rrobetti/j-api-proxy)
+to wrap a provider `XADataSource`:
 
 ```java
-import io.github.rrobetti.xafault.jdbc.FaultInjectingXADataSource;
+import io.github.rrobetti.xafault.jdbc.FaultInjectingJdbc;
 
-XADataSource wrapped = FaultInjectingXADataSource.wrap(vendorDataSource, engine, "orders-db");
-XAConnection connection = wrapped.getXAConnection(); // -> FaultInjectingXAConnection
-XAResource resource = connection.getXAResource();    // -> FaultInjectingXAResource
+XADataSource wrapped = FaultInjectingJdbc.wrap(vendorDataSource, engine, "orders-db");
+XAConnection connection = wrapped.getXAConnection();
+XAResource resource = connection.getXAResource(); // fault-injecting proxy
 ```
 
 Tested against a real embedded H2 XA data source (test-scoped only).

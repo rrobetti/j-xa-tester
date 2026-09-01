@@ -20,6 +20,10 @@
   <dependencies>
     <dependency>
       <groupId>io.github.rrobetti</groupId>
+      <artifactId>j-api-proxy-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.rrobetti</groupId>
       <artifactId>xa-tester-core</artifactId>
     </dependency>
     <dependency>

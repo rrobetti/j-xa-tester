@@ -73,6 +73,11 @@
       </dependency>
       <dependency>
         <groupId>io.github.rrobetti</groupId>
+        <artifactId>j-api-proxy-jdbc</artifactId>
+        <version>${j.api.proxy.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.rrobetti</groupId>
         <artifactId>j-api-proxy-jms-jakarta</artifactId>
         <version>${j.api.proxy.version}</version>
       </dependency>

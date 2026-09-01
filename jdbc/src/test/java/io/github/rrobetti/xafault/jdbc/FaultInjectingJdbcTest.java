@@ -1,13 +1,11 @@
 package io.github.rrobetti.xafault.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.rrobetti.xafault.EventPosition;
-import io.github.rrobetti.xafault.FaultInjectingXAResource;
 import io.github.rrobetti.xafault.ResourceKind;
 import io.github.rrobetti.xafault.XaAction;
 import io.github.rrobetti.xafault.XaEvent;
@@ -33,20 +31,18 @@ import org.junit.jupiter.api.Test;
  * (no fakes) so the wrapping is proven against an actual spec-compliant
  * driver rather than only a hand-rolled test double.
  */
-class FaultInjectingXADataSourceTest {
+class FaultInjectingJdbcTest {
 
     @Test
     void wrapsRealH2XaConnectionAndRecordsPrepareCommit() throws Exception {
         XaScenarioEngine engine = new XaScenarioEngine();
-        XADataSource wrapped = new FaultInjectingXADataSource(newH2DataSource(), engine, "orders-db");
+        XADataSource wrapped = FaultInjectingJdbc.wrap(newH2DataSource(), engine, "orders-db");
 
         // javax.sql.XAConnection does not extend AutoCloseable, so it cannot be used
         // directly in a try-with-resources statement.
         XAConnection xaConnection = wrapped.getXAConnection();
         try {
             XAResource resource = xaConnection.getXAResource();
-            assertInstanceOf(FaultInjectingXAResource.class, resource);
-
             try (Connection connection = xaConnection.getConnection()) {
                 Xid xid = new SimpleXid(1);
                 resource.start(xid, XAResource.TMNOFLAGS);
@@ -72,7 +68,7 @@ class FaultInjectingXADataSourceTest {
     @Test
     void getXAResourceIsCachedAcrossCalls() throws Exception {
         XaScenarioEngine engine = new XaScenarioEngine();
-        XADataSource wrapped = new FaultInjectingXADataSource(newH2DataSource(), engine, "orders-db");
+        XADataSource wrapped = FaultInjectingJdbc.wrap(newH2DataSource(), engine, "orders-db");
 
         XAConnection xaConnection = wrapped.getXAConnection();
         try {
@@ -89,7 +85,7 @@ class FaultInjectingXADataSourceTest {
         XaScenarioEngine engine = new XaScenarioEngine();
         engine.addRule(new XaRule(XaRules.before("orders-db", XaOperation.COMMIT),
                 XaAction.throwException(XAException.XAER_RMFAIL)));
-        XADataSource wrapped = new FaultInjectingXADataSource(newH2DataSource(), engine, "orders-db");
+        XADataSource wrapped = FaultInjectingJdbc.wrap(newH2DataSource(), engine, "orders-db");
 
         XAConnection xaConnection = wrapped.getXAConnection();
         try {
