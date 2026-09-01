@@ -67,6 +67,9 @@ mvn install
 </dependency>
 ```
 
+For a Spring Boot test setup that coordinates JDBC and MQ in one XA
+transaction, see the [Spring Boot XA integration example](docs/spring-boot-integration.md).
+
 ## Continuous integration and releases
 
 Two GitHub Actions workflows drive the project:
