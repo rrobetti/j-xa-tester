@@ -1,7 +1,6 @@
 package io.github.rrobetti.xafault.jms;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,7 +17,6 @@ import io.github.rrobetti.xafault.XaScenarioEngine;
 import jakarta.jms.XAConnection;
 import jakarta.jms.XAConnectionFactory;
 import jakarta.jms.XASession;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import javax.transaction.xa.XAException;
@@ -40,7 +38,6 @@ class FaultInjectingJmsTest {
         XASession session = connection.createXASession();
         XAResource resource = session.getXAResource();
 
-        assertInstanceOf(FaultInjectingXAResource.class, resource);
         assertNotSame(fakeResource, resource);
 
         Xid xid = new SimpleXid();
@@ -77,18 +74,6 @@ class FaultInjectingJmsTest {
     }
 
     @Test
-    void proxyImplementsAllDelegateInterfacesIncludingNonJmsOnes() {
-        List<String> calls = new ArrayList<>();
-        XAConnectionFactory delegate = new SerializableFakeFactory(calls);
-        XaScenarioEngine engine = new XaScenarioEngine();
-
-        XAConnectionFactory wrapped = FaultInjectingJms.wrap(delegate, engine, "orders-mq");
-
-        assertInstanceOf(XAConnectionFactory.class, wrapped);
-        assertInstanceOf(Serializable.class, wrapped);
-    }
-
-    @Test
     void ruleInterceptsCommitThroughTheFullProxyChainWithoutCallingTheRealResource() throws Exception {
         List<String> calls = new ArrayList<>();
         FakeXAResource fakeResource = new FakeXAResource();
@@ -112,33 +97,4 @@ class FaultInjectingJmsTest {
         @Override public byte[] getBranchQualifier() { return new byte[] {4}; }
     }
 
-    /** A delegate implementing both an XA-JMS interface and an unrelated marker interface. */
-    private static final class SerializableFakeFactory implements XAConnectionFactory, Serializable {
-        private final transient List<String> calls;
-
-        SerializableFakeFactory(List<String> calls) {
-            this.calls = calls;
-        }
-
-        @Override
-        public jakarta.jms.XAConnection createXAConnection() {
-            calls.add("createXAConnection");
-            return null;
-        }
-
-        @Override
-        public jakarta.jms.XAConnection createXAConnection(String userName, String password) {
-            return createXAConnection();
-        }
-
-        @Override
-        public jakarta.jms.XAJMSContext createXAContext() {
-            return null;
-        }
-
-        @Override
-        public jakarta.jms.XAJMSContext createXAContext(String userName, String password) {
-            return null;
-        }
-    }
 }

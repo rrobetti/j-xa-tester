@@ -130,9 +130,8 @@ Tested against a real embedded H2 XA data source (test-scoped only).
 
 ## Jakarta JMS adapter
 
-`FaultInjectingJms.wrap` uses a JDK dynamic proxy to instrument whatever XA
-object graph a Jakarta Messaging provider hands back, without the adapter's
-main code ever compiling against `jakarta.jms`:
+`FaultInjectingJms.wrap` uses [J API Proxy](https://github.com/rrobetti/j-api-proxy)
+to instrument the XA object graph a Jakarta Messaging provider hands back:
 
 ```java
 import io.github.rrobetti.xafault.jms.FaultInjectingJms;
@@ -141,14 +140,12 @@ XAConnectionFactory wrapped = FaultInjectingJms.wrap(providerFactory, engine, "o
 
 XAConnection connection = wrapped.createXAConnection();
 XASession session = connection.createXASession();
-XAResource resource = session.getXAResource(); // -> FaultInjectingXAResource
+XAResource resource = session.getXAResource(); // fault-injecting proxy
 ```
 
-The proxy recognizes XA-specific return types (`XAConnection`, `XASession`,
-`XAResource`, ...) by interface name and wraps only those; ordinary message
-production/consumption calls pass straight through untouched. Any provider
-conforming to the Jakarta Messaging (or legacy `javax.jms`) contract works,
-with no compile-time dependency on that provider.
+J API Proxy recursively wraps the factory, connection, session, and XA
+resource. Ordinary message production and consumption calls pass straight
+through untouched.
 
 ## Toxiproxy controller
 

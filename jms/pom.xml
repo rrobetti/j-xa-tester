@@ -21,6 +21,10 @@
   <dependencies>
     <dependency>
       <groupId>io.github.rrobetti</groupId>
+      <artifactId>j-api-proxy-jms-jakarta</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.rrobetti</groupId>
       <artifactId>xa-tester-core</artifactId>
     </dependency>
     <dependency>
@@ -31,7 +35,6 @@
     <dependency>
       <groupId>jakarta.jms</groupId>
       <artifactId>jakarta.jms-api</artifactId>
-      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>
