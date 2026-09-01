@@ -62,7 +62,7 @@ mvn install
 <dependency>
   <groupId>io.github.rrobetti</groupId>
   <artifactId>xa-tester-jdbc</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0-alpha</version>
   <scope>test</scope>
 </dependency>
 ```
@@ -74,7 +74,7 @@ Two GitHub Actions workflows drive the project:
 | Workflow | Trigger | Notes |
 | --- | --- | --- |
 | [`Build and Test`](.github/workflows/main.yml) | Push to the default branch, and pull requests targeting it | Runs `mvn clean verify` for all modules on JDK 17 and 21. Pull-request runs first wait on the `pr-approval` environment, so a maintainer must approve the run before any build starts; pushes to the default branch skip that gate. |
-| [`Release to Maven Central`](.github/workflows/release.yml) | Manual (`workflow_dispatch`) | Bumps the version, builds and tests, publishes every module to Sonatype Maven Central (`-Prelease`), tags the release, bumps to the next `-SNAPSHOT`, and creates a GitHub Release. Gated by the `release` environment. Supports a dry run. |
+| [`Release to Maven Central`](.github/workflows/release.yml) | Manual (`workflow_dispatch`) | Bumps the version, builds and tests, publishes every module to Sonatype Maven Central (`-Prelease`), tags the release, bumps to the next `-alpha`, and creates a GitHub Release. Gated by the `release` environment. Supports a dry run. |
 
 One-time repository setup:
 
