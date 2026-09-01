@@ -1,0 +1,51 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.github.rrobetti</groupId>
+    <artifactId>j-xa-tester</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>xa-tester-junit5</artifactId>
+  <name>J XA Tester - JUnit 5 Extension</name>
+  <description>
+    A JUnit Jupiter extension that provisions a fresh XaScenarioEngine per
+    test, resolves it as a test-method parameter, supports declarative
+    @XaFault rules with a "did it actually fire" assertion, and attaches a
+    timeline report to failing tests. junit-jupiter-api is a compile-scope
+    dependency because this module's whole purpose is JUnit integration;
+    every other dependency remains test-scoped.
+  </description>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.github.rrobetti</groupId>
+      <artifactId>xa-tester-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.github.rrobetti</groupId>
+      <artifactId>xa-tester-timeline</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-testkit</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-launcher</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

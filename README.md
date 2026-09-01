@@ -1,33 +1,43 @@
 # J XA Tester
 
-J XA Tester is a Java 17 library for deterministic, phase-aware XA testing.
-Its current `0.1.0-SNAPSHOT` core decorates an existing
-`javax.transaction.xa.XAResource`, records each XA interaction, and can inject a
-synthetic `XAException` at a selected point.
+J XA Tester is a Java 17 testkit for deterministic, phase-aware XA fault
+injection. It decorates an existing `javax.transaction.xa.XAResource` (JDBC,
+JMS, or any other XA participant), records every interaction as an immutable
+event, and can inject a synthetic `XAException`, delay, network-level fault,
+or arbitrary callback at a precisely selected point (`BEFORE` / `AFTER_SUCCESS`
+/ `AFTER_FAILURE` of a specific operation on a specific resource).
 
 It is intended for tests, not production use. It never records connection
-credentials, SQL, or message contents.
+credentials, SQL, or message contents — only an application-chosen
+`resourceId` alias and structural metadata about the XA call.
 
-## Current scope
+## Module structure
 
-The core supports:
+The project is a Maven reactor of six focused modules, each independently
+consumable:
 
-- Every `XAResource` method: `start`, `end`, `prepare`, `commit`, `rollback`,
-  `recover`, `forget`, `isSameRM`, and transaction-timeout methods.
-- `BEFORE`, `AFTER_SUCCESS`, and `AFTER_FAILURE` events.
-- Globally ordered and per-resource operation ordinals.
-- Immutable snapshots of XID bytes for safe journaling.
-- Once-only predicate rules and synthetic `XAException` actions.
-- Correct peer unwrapping for `isSameRM`.
+| Module | Artifact | Depends on | Purpose |
+| --- | --- | --- | --- |
+| [`core`](core) | `xa-tester-core` | *(JDK only)* | `FaultInjectingXAResource`, the event model, the rule/action engine, and the blocking `XaGate`. Zero non-JDK dependencies at compile time. |
+| [`jdbc`](jdbc) | `xa-tester-jdbc` | `core` | Wraps a JDBC `XADataSource`/`XAConnection` so every connection it hands out (normal or recovery) is instrumented automatically. |
+| [`jms`](jms) | `xa-tester-jms` | `core` | Wraps a Jakarta Messaging `XAConnectionFactory`/`XAConnection`/`XASession` using JDK dynamic proxies, so the adapter never compiles against `jakarta.jms` itself. |
+| [`toxiproxy`](toxiproxy) | `xa-tester-toxiproxy` | `core` | A minimal [Toxiproxy](https://github.com/Shopify/toxiproxy) REST client (hand-rolled JSON + `java.net.http.HttpClient`) plus `XaAction` bridges, for combining synthetic XA faults with real network faults. |
+| [`timeline`](timeline) | `xa-tester-timeline` | `core` | Human-readable timeline rendering, blocking `TimelineProbe.awaitEvent`, and `TimelineAssertions` helpers for verifying what actually happened. |
+| [`junit5`](junit5) | `xa-tester-junit5` | `core`, `timeline` | A JUnit Jupiter extension (`@XaTest`, `@XaFault`/`@XaFaults`) that provisions a fresh engine per test, injects it as a parameter, and fails the test if a required fault never fired. |
 
-JDBC/JMS factory wrappers, Toxiproxy controls, JUnit extensions, recovery
-controllers, gates, delays, callbacks, reporting, and a scenario DSL are not
-yet included. Wrap the `XAResource` returned by your provider manually while
-using this core.
+### Dependency policy: test artifacts only
+
+Only the JDK and other modules of this project are compile-scope dependencies
+of any module's main code, with one deliberate, documented exception:
+`xa-tester-junit5` compiles against `junit-jupiter-api`, because its entire
+purpose is integrating with JUnit 5. Every other external library used
+anywhere in the build — H2, `jakarta.jms-api`, Toxiproxy's wire format,
+`junit-jupiter`, `junit-platform-testkit`, `junit-platform-launcher` — is a
+`test`-scoped dependency, used only to exercise the adapters against a real
+(if lightweight) implementation of the protocol they wrap. Run
+`mvn dependency:tree -pl <module>` in any module to verify this for yourself.
 
 ## Build and test
-
-The project uses Maven and Java 17:
 
 ```bash
 git clone https://github.com/rrobetti/j-xa-tester.git
@@ -35,27 +45,30 @@ cd j-xa-tester
 mvn test
 ```
 
-For local use, first install the snapshot:
+This builds and tests all six modules in dependency order (57 tests as of
+this writing: 18 in `core`, 3 in `jdbc`, 4 in `jms`, 15 in `toxiproxy`, 13 in
+`timeline`, 4 in `junit5`).
+
+For local use, install the snapshot, then add the module(s) you need to a
+test project:
 
 ```bash
 mvn install
 ```
 
-Then add it to a test project's Maven dependencies:
-
 ```xml
 <dependency>
   <groupId>io.github.rrobetti</groupId>
-  <artifactId>xa-fault-testkit</artifactId>
+  <artifactId>xa-tester-jdbc</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <scope>test</scope>
 </dependency>
 ```
 
-## Basic interception
+## Core: intercepting an `XAResource`
 
-Construct one `XaScenarioEngine` per isolated test. Decorate the provider's
-resource before giving it to the transaction manager:
+Construct one `XaScenarioEngine` per isolated test, then decorate the
+provider's resource before handing it to the transaction manager:
 
 ```java
 import io.github.rrobetti.xafault.FaultInjectingXAResource;
@@ -66,122 +79,167 @@ import javax.transaction.xa.XAResource;
 XAResource vendorResource = obtainProviderXaResource();
 XaScenarioEngine engine = new XaScenarioEngine();
 
-XAResource instrumented = new FaultInjectingXAResource(
-    vendorResource,
-    engine,
-    "orders-db",
-    ResourceKind.JDBC);
+XAResource instrumented =
+    new FaultInjectingXAResource(vendorResource, engine, "orders-db", ResourceKind.JDBC);
 
 transactionManager.enlistResource(instrumented);
 ```
 
-`resourceId` is an application-chosen safe alias used in events. Do not put a
-connection URL, username, or other secret in it. Use `ResourceKind.JMS` for a
-messaging participant and `ResourceKind.OTHER` for another XA provider.
+`resourceId` is an application-chosen safe alias used in events; never put a
+connection URL, username, or other secret in it.
 
-The wrapper delegates the original call unless a `BEFORE` rule throws. It emits
-an `AFTER_SUCCESS` event with the integer return code for `prepare`,
-`getTransactionTimeout`, or other integer-returning methods. If the delegate
-or a rule throws an `XAException`, it emits `AFTER_FAILURE` and preserves that
-exception's `errorCode`.
-
-## Injecting a deterministic commit failure
-
-Rules combine a `Predicate<XaEvent>` matcher with an `XaAction`. Each rule fires
-at most once, including when multiple threads observe matching events. This
-example prevents the delegate's first matching `commit` call and makes the
-transaction manager observe `XAER_RMFAIL`:
+Rules combine a `Predicate<XaEvent>` matcher with an `XaAction` and fire at
+most once each, even under concurrent access:
 
 ```java
 import static javax.transaction.xa.XAException.XAER_RMFAIL;
 
-import io.github.rrobetti.xafault.EventPosition;
 import io.github.rrobetti.xafault.XaAction;
-import io.github.rrobetti.xafault.XaOperation;
 import io.github.rrobetti.xafault.XaRule;
+import io.github.rrobetti.xafault.XaRules;
+import io.github.rrobetti.xafault.XaOperation;
 
-engine.addRule(new XaRule(
-    event -> event.resourceId().equals("orders-db")
-        && event.operation() == XaOperation.COMMIT
-        && event.position() == EventPosition.BEFORE
-        && Boolean.FALSE.equals(event.onePhase()),
-    XaAction.throwException(XAER_RMFAIL)));
-```
+XaRule rule = new XaRule(
+    XaRules.before("orders-db", XaOperation.COMMIT),
+    XaAction.throwException(XAER_RMFAIL));
+engine.addRule(rule);
 
-Because the rule action runs while recording the `BEFORE` event, the vendor
-resource's `commit` method is not called. The journal still contains the
-`BEFORE` event followed by an `AFTER_FAILURE` event. After the test, assert
-`rule.fired()` so a mismatched transaction-manager flow cannot produce a false
-pass:
-
-```java
+// ... exercise the code under test, then:
 assertTrue(rule.fired(), "the intended XA fault was not injected");
 ```
 
-Retain the rule when adding it:
+`XaAction` also supports `.delay(Duration)`, `.gate(XaGate, Duration)` (block
+until another thread releases the gate, with a timeout), `.callback(...)`,
+and `.compose(...)` to chain several actions.
+
+## JDBC adapter
+
+`FaultInjectingJdbc.wrap` uses [J API Proxy](https://github.com/rrobetti/j-api-proxy)
+to wrap a provider `XADataSource`:
 
 ```java
-XaRule rule = new XaRule(
-    event -> event.operation() == XaOperation.PREPARE
-        && event.position() == EventPosition.BEFORE,
-    XaAction.throwException(XAER_RMFAIL));
-engine.addRule(rule);
+import io.github.rrobetti.xafault.jdbc.FaultInjectingJdbc;
+
+XADataSource wrapped = FaultInjectingJdbc.wrap(vendorDataSource, engine, "orders-db");
+XAConnection connection = wrapped.getXAConnection();
+XAResource resource = connection.getXAResource(); // fault-injecting proxy
 ```
 
-## Inspecting the event timeline
+Tested against a real embedded H2 XA data source (test-scoped only).
 
-`engine.journal().events()` returns an immutable snapshot in observed sequence
-order. `sequence` is globally monotonic; `operationOrdinal` identifies the XA
-operation across resources; `resourceOperationOrdinal` identifies it for the
-particular wrapper instance.
+## Jakarta JMS adapter
+
+`FaultInjectingJms.wrap` uses [J API Proxy](https://github.com/rrobetti/j-api-proxy)
+to instrument the XA object graph a Jakarta Messaging provider hands back:
 
 ```java
-import io.github.rrobetti.xafault.XaEvent;
+import io.github.rrobetti.xafault.jms.FaultInjectingJms;
 
-for (XaEvent event : engine.journal().events()) {
-    System.out.printf("%03d %s %s %s%n",
-        event.sequence(),
-        event.resourceId(),
-        event.operation(),
-        event.position());
+XAConnectionFactory wrapped = FaultInjectingJms.wrap(providerFactory, engine, "orders-mq");
+
+XAConnection connection = wrapped.createXAConnection();
+XASession session = connection.createXASession();
+XAResource resource = session.getXAResource(); // fault-injecting proxy
+```
+
+J API Proxy recursively wraps the factory, connection, session, and XA
+resource. Ordinary message production and consumption calls pass straight
+through untouched.
+
+## Toxiproxy controller
+
+`ToxiproxyClient` is a small REST client for a running
+[Toxiproxy](https://github.com/Shopify/toxiproxy) server, letting a test
+combine real network-level faults with the synthetic XA faults above:
+
+```java
+import io.github.rrobetti.xafault.toxiproxy.*;
+
+ToxiproxyClient client = new ToxiproxyClient("http://localhost:8474");
+ToxiproxyProxy proxy = client.createProxy("orders-db", "localhost:15432", "localhost:5432");
+
+proxy.addToxic(Toxic.latency("db-lag", Toxic.Stream.DOWNSTREAM, 500, 100));
+```
+
+`ToxiproxyXaActions` bridges proxy control into the same `XaAction` pipeline
+used for synthetic faults, so a rule can, e.g., disable a proxy the moment a
+`PREPARE` call is observed:
+
+```java
+engine.addRule(new XaRule(
+    XaRules.before("orders-db", XaOperation.PREPARE),
+    ToxiproxyXaActions.disable(proxy)));
+```
+
+## Timeline and probes
+
+`TimelineReport.render(events)` prints a fixed-width, human-readable timeline
+of everything an engine recorded — useful for debugging a failing scenario or
+attaching to a test failure report. `TimelineProbe` lets a test block a
+background thread until a specific event is observed (already-happened or
+still-to-come), and `TimelineAssertions` provides common structural checks:
+
+```java
+import io.github.rrobetti.xafault.timeline.*;
+
+TimelineProbe probe = new TimelineProbe(engine);
+XaEvent event = probe.awaitEvent(
+    XaRules.afterFailure("orders-db", XaOperation.COMMIT), Duration.ofSeconds(5));
+
+TimelineAssertions.assertOperationOrder(engine.journal().events(), "orders-db",
+    XaOperation.START, XaOperation.END, XaOperation.PREPARE, XaOperation.COMMIT);
+TimelineAssertions.assertNoFailures(engine.journal().events());
+System.out.println(TimelineReport.render(engine.journal().events()));
+```
+
+## JUnit 5 extension
+
+`@XaTest` provisions a fresh `XaScenarioEngine` per test method (resolvable as
+a parameter) and `@XaFault` declares a synthetic fault as data instead of
+imperative setup code. If a fault marked `requireFired = true` (the default)
+never triggers, the extension fails the test during teardown — turning a
+silently-skipped fault into a hard failure instead of a misleadingly green
+test — and dumps the recorded timeline to `stderr` for any test that fails:
+
+```java
+import io.github.rrobetti.xafault.junit5.XaFault;
+import io.github.rrobetti.xafault.junit5.XaTest;
+import io.github.rrobetti.xafault.XaScenarioEngine;
+
+@XaTest
+class OrderServiceTest {
+
+    @Test
+    @XaFault(resourceId = "orders-db", operation = XaOperation.COMMIT, errorCode = XAException.XAER_RMFAIL)
+    void retriesWhenCommitFailsOnce(XaScenarioEngine engine) {
+        XAResource resource =
+            new FaultInjectingXAResource(realResource, engine, "orders-db", ResourceKind.JDBC);
+        // exercise the code under test; the first matching COMMIT call throws XAER_RMFAIL.
+    }
 }
 ```
 
-Relevant event fields include:
-
-| Field | Meaning |
-| --- | --- |
-| `xid` | Defensive `XidSnapshot`; its byte-array accessors also return copies. |
-| `flags` | XA flags for `start`, `end`, `recover`, or the timeout seconds for `setTransactionTimeout`. |
-| `onePhase` | `commit`'s one-phase argument; otherwise `null`. |
-| `returnCode` | Integer result where applicable, such as `XA_OK` from `prepare`. |
-| `error` | The XA error code and exception class on `AFTER_FAILURE`; otherwise `null`. |
-| `resourceInstanceId` | A unique wrapper identifier; several wrapped resources can represent one resource manager. |
+Use `@XaFaults` (or simply repeat `@XaFault`) to declare more than one fault
+on the same test method.
 
 ## `isSameRM` and recovery
 
 Pass instrumented resources consistently to the transaction manager. When
 `isSameRM` receives another `FaultInjectingXAResource`, the wrapper passes its
 underlying provider resource to the delegate, preserving resource-manager
-identity behavior.
+identity behavior. Recovery connections should also be wrapped, using the
+same `resourceId`, before their resources reach the transaction manager, so
+one engine observes `recover` and recovery-time `commit` calls too.
 
-Recovery connections should also be wrapped before their resources are handed
-to the transaction manager. This lets the same engine observe `recover` and
-recovery-time `commit` calls:
+Use a separate engine per test; do not share one engine across unrelated
+concurrent transactions.
 
-```java
-XAResource recoveryResource = new FaultInjectingXAResource(
-    obtainRecoveryProviderXaResource(), engine, "orders-db", ResourceKind.JDBC);
-```
+## Limitations
 
-Use a separate engine for each test and do not share one engine across
-unrelated concurrent transactions. The current core does not select a single
-test XID or provide cleanup/recovery orchestration; those responsibilities
-remain with the test and transaction manager until later modules are added.
-
-## Next steps
-
-The planned adapters will wrap JDBC `XADataSource` and Jakarta JMS
-`XAConnectionFactory` objects so normal and recovery connections are
-intercepted automatically. Toxiproxy and JUnit modules will add real network
-faults, cleanup, waits, reports, and outcome assertions on top of this core.
+This is a testkit, not a transaction manager or a message broker. It does not
+select which XID belongs to which test, orchestrate cleanup, or manage a
+Toxiproxy server's lifecycle (start/stop the server yourself — the client
+only talks to an already-running instance). The JMS adapter is proxy-based
+and reflects on return types, so a provider whose XA interfaces deviate
+significantly in naming from the standard `jakarta.jms`/`javax.jms` contracts
+may not be recognized correctly.
